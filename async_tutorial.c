@@ -57,6 +57,9 @@ loop_thread(void* udata)
  	// This must be done in event loop thread.
 	loop->as_loop = as_event_set_external_loop(loop->ev_loop);
 
+	// Notify parent thread that external loop has been initialized.
+	as_monitor_notify(&monitor);
+
 	ev_loop(loop->ev_loop, 0);
 	ev_loop_destroy(loop->ev_loop);
 	return NULL;
@@ -70,10 +73,16 @@ share_event_loop(loop* loop)
 		return false;
 	}
 
+	// Start monitor.
+	as_monitor_begin(&monitor);
+
 	// Create event loop thread that will be shared.
 	if (pthread_create(&loop->thread, NULL, loop_thread, loop) != 0) {
 		return false;
 	}
+
+	// Wait till event loop has been initialized.
+	as_monitor_wait(&monitor);	
 	return true;
 }
 
@@ -279,6 +288,9 @@ main(int argc, char* argv[])
 	printf("ShareLoop=%s\n", share_loop ? "true" : "false");
 	printf("Pipeline=%s\n", pipeline ? "true" : "false");
 
+	// Initialize monitor.
+	as_monitor_init(&monitor);
+
 	if (share_loop) {
 		// Demonstrate how to share an existing event loop.
 		if (! share_event_loop(&external_loop)) {
@@ -308,9 +320,8 @@ main(int argc, char* argv[])
 		return -1;
 	}
 
-	// Initialize monitor.
-	as_monitor_init(&monitor);
-
+	// Reset monitor.
+	as_monitor_begin(&monitor);
 
 	if (pipeline) {
 		// Demonstrate pipelined writes.
@@ -330,4 +341,10 @@ main(int argc, char* argv[])
 	aerospike_close(&as, &err);
 	aerospike_destroy(&as);
 	as_event_close_loops();
+
+	if (share_loop) {
+		// Join on external event loop thread.
+		pthread_join(external_loop.thread, NULL);
+	}
 }
+
