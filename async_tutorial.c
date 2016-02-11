@@ -309,6 +309,8 @@ main(int argc, char* argv[])
 	as_config cfg;
 	as_config_init(&cfg);
 	as_config_add_host(&cfg, g_host, g_port);
+	cfg.async_max_conns_per_node = 200;
+	cfg.pipe_max_conns_per_node = 32;
 	aerospike_init(&as, &cfg);
 
 	// Connect to cluster.
