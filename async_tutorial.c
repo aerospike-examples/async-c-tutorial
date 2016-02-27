@@ -192,9 +192,14 @@ pipeline_listener(void* udata, as_event_loop* event_loop)
 	counter* counter = udata;
 
 	if (counter->pipe_count < counter->queue_size) {
-		// Pipeline has more space.  Issue another write.
-		counter->pipe_count++;
-		write_record(event_loop, counter, counter->count + counter->pipe_count);
+		// Check if we need to write more records.
+		uint32_t next = counter->count + counter->pipe_count;
+
+		if (next < counter->max) {
+			// Pipeline has more space.  Issue another write.
+			counter->pipe_count++;
+			write_record(event_loop, counter, next);
+		}
 	}
 }
 
