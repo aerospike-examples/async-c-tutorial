@@ -32,14 +32,16 @@ static const char* g_namespace = "test";
 static const char* g_set = "test";
 
 static aerospike as;
-static as_monitor monitor;
+static as_monitor share_loops_monitor;
+static as_monitor app_complete_monitor;
 
 /******************************************************************************
  *	Forward Declarations
  *****************************************************************************/
 
 static void print_usage(const char* program);
-static bool share_event_loop(loop* loop);
+static bool share_event_loops(loop* loops, uint32_t loop_count);
+static void join_event_loops(loop* loops, uint32_t loop_count);
 static void* loop_thread(void* udata);
 static void write_records_pipeline(counter* counter);
 static void write_records_async(counter* counter);
@@ -94,12 +96,9 @@ main(int argc, char* argv[])
 	printf("ShareLoop=%s\n", share_loop ? "true" : "false");
 	printf("Pipeline=%s\n", pipeline ? "true" : "false");
 	
-	// Initialize monitor.
-	as_monitor_init(&monitor);
-	
 	if (share_loop) {
 		// Demonstrate how to share an existing event loop.
-		if (! share_event_loop(&external_loop)) {
+		if (! share_event_loops(&external_loop, 1)) {
 			printf("Failed to share event loop\n");
 			return -1;
 		}
@@ -128,31 +127,44 @@ main(int argc, char* argv[])
 		return -1;
 	}
 	
-	// Reset monitor.
-	as_monitor_begin(&monitor);
+	// Initialize monitor.
+	as_monitor_init(&app_complete_monitor);
 	
 	if (pipeline) {
 		// Demonstrate pipelined writes.
 		// Pipeline queue size (1000) is greater because sockets are shared.
-		counter counter = {max_records, 0, 1000, 0, pipeline_listener};
+		counter counter = {
+			.max = max_records,
+			.count = 0,
+			.queue_size = 1000,
+			.pipe_count = 0,
+			.pipe_listener = pipeline_listener
+		};
 		write_records_pipeline(&counter);
 	}
 	else {
 		// Demonstrate async non-pipelined writes.
 		// Async queue size (100) is less because there is one socket per concurrent command.
-		counter counter = {max_records, 0, 100, 0, NULL};
+		counter counter = {
+			.max = max_records,
+			.count = 0,
+			.queue_size = 100,
+			.pipe_count = 0,
+			.pipe_listener = NULL
+		};
 		write_records_async(&counter);
 	}
 	
 	// Wait till all commands have completed before shutting down.
-	as_monitor_wait(&monitor);
+	as_monitor_wait(&app_complete_monitor);
+	as_monitor_destroy(&app_complete_monitor);
 	aerospike_close(&as, &err);
 	aerospike_destroy(&as);
 	as_event_close_loops();
 	
 	if (share_loop) {
 		// Join on external event loop thread.
-		pthread_join(external_loop.thread, NULL);
+		join_event_loops(&external_loop, 1);
 	}
 }
 
@@ -165,24 +177,43 @@ print_usage(const char* program)
 }
 
 static bool
-share_event_loop(loop* loop)
+share_event_loops(loop* loops, uint32_t loop_count)
 {
 	// Tell C client the maximum number of event loops that will be shared.
-	if (! as_event_set_external_loop_capacity(1)) {
+	if (! as_event_set_external_loop_capacity(loop_count)) {
 		return false;
 	}
 	
-	// Start monitor.
-	as_monitor_begin(&monitor);
+	// Initialize monitor.
+	as_monitor_init(&share_loops_monitor);
+	bool status = true;
 	
-	// Create event loop thread that will be shared.
-	if (pthread_create(&loop->thread, NULL, loop_thread, loop) != 0) {
-		return false;
+	for (uint32_t i = 0; i < loop_count; i++) {
+		loop* loop = &loops[i];
+		
+		// Start monitor.
+		as_monitor_begin(&share_loops_monitor);
+		
+		// Create event loop thread that will be shared.
+		if (pthread_create(&loop->thread, NULL, loop_thread, loop) != 0) {
+			status = false;
+			break;
+		}
+		
+		// Wait till event loop has been initialized.
+		as_monitor_wait(&share_loops_monitor);
 	}
-	
-	// Wait till event loop has been initialized.
-	as_monitor_wait(&monitor);
-	return true;
+	as_monitor_destroy(&share_loops_monitor);
+	return status;
+}
+
+static void
+join_event_loops(loop* loops, uint32_t loop_count)
+{
+	for (uint32_t i = 0; i < loop_count; i++) {
+		loop* loop = &loops[i];
+		pthread_join(loop->thread, NULL);
+	}
 }
 
 static void*
@@ -197,7 +228,7 @@ loop_thread(void* udata)
 	loop->as_loop = as_event_set_external_loop(loop->ev_loop);
 
 	// Notify parent thread that external loop has been initialized.
-	as_monitor_notify(&monitor);
+	as_monitor_notify(&share_loops_monitor);
 
 	ev_loop(loop->ev_loop, 0);
 	ev_loop_destroy(loop->ev_loop);
@@ -283,7 +314,7 @@ write_listener(as_error* err, void* udata, as_event_loop* event_loop)
 	
 	if (err) {
 		printf("aerospike_key_put_async() returned %d - %s\n", err->code, err->message);
-		as_monitor_notify(&monitor);
+		as_monitor_notify(&app_complete_monitor);
 		return;
 	}
 	
@@ -344,7 +375,7 @@ batch_listener(as_error* err, as_batch_read_records* records, void* udata, as_ev
 	if (err) {
 		printf("aerospike_batch_read_async() returned %d - %s\n", err->code, err->message);
 		as_batch_read_destroy(records);
-		as_monitor_notify(&monitor);
+		as_monitor_notify(&app_complete_monitor);
 		return;
 	}
 
@@ -370,5 +401,5 @@ batch_listener(as_error* err, as_batch_read_records* records, void* udata, as_ev
 
 	printf("Found %u/%u records\n", n_found, list->size);
 	as_batch_read_destroy(records);
-	as_monitor_notify(&monitor);	
+	as_monitor_notify(&app_complete_monitor);
 }
