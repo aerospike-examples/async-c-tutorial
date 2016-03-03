@@ -15,11 +15,12 @@ typedef struct {
 } loop;
 
 typedef struct {
-	uint32_t max;
-	uint32_t count;
-	uint32_t queue_size;
-	uint32_t pipe_count;
-	as_pipe_listener pipe_listener;
+	uint32_t next_id;     // Key of next record to write.
+	uint32_t max;         // Number of records to write.
+	uint32_t count;       // Records written.
+	uint32_t queue_size;  // Maximum records allowed inflight (in async queue).
+	uint32_t pipe_count;  // Records in pipeline. Pipeline mode only.
+	as_pipe_listener pipe_listener;  // Pipeline listener callback. Pipeline mode only.
 } counter;
 
 /******************************************************************************
@@ -45,7 +46,7 @@ static void join_event_loops(loop* loops, uint32_t loop_count);
 static void* loop_thread(void* udata);
 static void write_records_pipeline(counter* counter);
 static void write_records_async(counter* counter);
-static bool write_record(as_event_loop* event_loop, counter* counter, uint32_t index);
+static bool write_record(as_event_loop* event_loop, counter* counter);
 static void pipeline_listener(void* udata, as_event_loop* event_loop);
 static void write_listener(as_error* err, void* udata, as_event_loop* event_loop);
 static void batch_read(as_event_loop* event_loop, uint32_t max_records);
@@ -115,7 +116,6 @@ main(int argc, char* argv[])
 	as_config_init(&cfg);
 	as_config_add_host(&cfg, g_host, g_port);
 	cfg.async_max_conns_per_node = 200;
-	cfg.pipe_max_conns_per_node = 32;
 	aerospike_init(&as, &cfg);
 	
 	// Connect to cluster.
@@ -134,6 +134,7 @@ main(int argc, char* argv[])
 		// Demonstrate pipelined writes.
 		// Pipeline queue size (1000) is greater because sockets are shared.
 		counter counter = {
+			.next_id = 0,
 			.max = max_records,
 			.count = 0,
 			.queue_size = 1000,
@@ -146,6 +147,7 @@ main(int argc, char* argv[])
 		// Demonstrate async non-pipelined writes.
 		// Async queue size (100) is less because there is one socket per concurrent command.
 		counter counter = {
+			.next_id = 0,
 			.max = max_records,
 			.count = 0,
 			.queue_size = 100,
@@ -241,7 +243,8 @@ write_records_pipeline(counter* counter)
 	// Write a single record to start pipeline.
 	// More records will be written in pipeline_listener to fill pipeline queue.
 	// A NULL event_loop indicates that an event loop will be chosen round-robin.
-	write_record(NULL, counter, 0);
+	counter->pipe_count++;
+	write_record(NULL, counter);
 }
 
 static void
@@ -252,18 +255,20 @@ write_records_async(counter* counter)
 	
 	// Write queue_size commands on the async queue.
 	for (uint32_t i = 0; i < counter->queue_size; i++) {
-		if (! write_record(event_loop, counter, i)) {
+		if (! write_record(event_loop, counter)) {
 			break;
 		}
 	}
 }
 
 static bool
-write_record(as_event_loop* event_loop, counter* counter, uint32_t index)
+write_record(as_event_loop* event_loop, counter* counter)
 {
+	int64_t id = counter->next_id++;
+	
 	// No need to destroy a stack as_key object, if we only use as_key_init_int64().
 	as_key key;
-	as_key_init_int64(&key, g_namespace, g_set, (int64_t)index);
+	as_key_init_int64(&key, g_namespace, g_set, id);
 	
 	// Create an as_record object with one (integer value) bin. By using
 	// as_record_inita(), we won't need to destroy the record if we only set
@@ -273,7 +278,7 @@ write_record(as_event_loop* event_loop, counter* counter, uint32_t index)
 	
 	// In general it's ok to reset a bin value - all as_record_set_... calls
 	// destroy any previous value.
-	as_record_set_int64(&rec, "test-bin", (int64_t)index);
+	as_record_set_int64(&rec, "test-bin", id);
 	
 	// Write a record to the database.
 	as_error err;
@@ -290,20 +295,10 @@ pipeline_listener(void* udata, as_event_loop* event_loop)
 	counter* counter = udata;
 	
 	// Check if pipeline has space.
-	if (counter->pipe_count < counter->queue_size) {
-		// Pipeline has more space.
+	if (counter->pipe_count < counter->queue_size && counter->next_id < counter->max) {
+		// Issue another write.
 		counter->pipe_count++;
-		uint32_t next = counter->count + counter->pipe_count;
-		
-		// Check if we need to write more records.
-		if (next < counter->max) {
-			// Issue another write.
-			write_record(event_loop, counter, next);
-		}
-		else {
-			// No more records need to be written.  Cancel pipeline write.
-			counter->pipe_count--;
-		}
+		write_record(event_loop, counter);
 	}
 }
 
@@ -317,10 +312,10 @@ write_listener(as_error* err, void* udata, as_event_loop* event_loop)
 		as_monitor_notify(&app_complete_monitor);
 		return;
 	}
-	
+
 	// Atomic increment is not necessary since only one event loop is used.
 	if (++counter->count == counter->max) {
-		// We have total records.
+		// We have written all records.
 		printf("Wrote %u records\n", counter->count);
 		
 		// Records can now be read in a batch.
@@ -328,24 +323,14 @@ write_listener(as_error* err, void* udata, as_event_loop* event_loop)
 		return;
 	}
 	
-	if (counter->pipe_listener) {
-		// Check if we need to write more records.
-		uint32_t next = counter->count + counter->pipe_count;
-		
-		if (next < counter->max) {
-			write_record(event_loop, counter, next);
-		}
-		else {
-			// Decrement pipeline queue because a write finished and we did not write a new record.
-			counter->pipe_count--;
-		}
+	// Check if we need to write another record.
+	if (counter->next_id < counter->max) {
+		write_record(event_loop, counter);
 	}
 	else {
-		// Check if we need to write more records.
-		uint32_t next = counter->count + counter->queue_size - 1;
-		
-		if (next < counter->max) {
-			write_record(event_loop, counter, next);
+		if (counter->pipe_listener) {
+			// There's one fewer command in the pipeline.
+			counter->pipe_count--;
 		}
 	}
 }
