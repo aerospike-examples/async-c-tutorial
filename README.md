@@ -18,9 +18,9 @@ sudo make install
 [Aerospike C client](http://www.aerospike.com/download/client/c) package with libev on RedHat 6.
 
 ```bash
-tar xvf aerospike-client-c-4.0.2.el6.x86_64.tgz
-cd aerospike-client-c-4.0.2.el6.x86_64
-sudo rpm -i aerospike-client-c-libev-devel-4.0.2-1.el6.x86_64.rpm
+tar xvf aerospike-client-c-4.1.3.el6.x86_64.tgz
+cd aerospike-client-c-4.1.3.el6.x86_64
+sudo rpm -i aerospike-client-c-libev-devel-4.1.3-1.el6.x86_64.rpm
 ```
 
 ## Build
