@@ -168,6 +168,7 @@ main(int argc, char* argv[])
 		// Join on external event loop thread.
 		join_event_loops(&external_loop, 1);
 	}
+	as_event_destroy_loops();
 }
 
 static void
