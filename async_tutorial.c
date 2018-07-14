@@ -1,7 +1,16 @@
 #include <aerospike/aerospike.h>
 #include <aerospike/aerospike_batch.h>
 #include <aerospike/aerospike_key.h>
+#include <aerospike/as_event.h>
 #include <aerospike/as_monitor.h>
+#include <unistd.h>
+
+#if defined(AS_USE_LIBEVENT)
+#include <event.h>
+#if LIBEVENT_VERSION_NUMBER < 0x02010000
+void event_base_add_virtual(struct event_base*);
+#endif
+#endif
 
 /******************************************************************************
  *	Types
@@ -10,7 +19,13 @@
 // External loop definition
 typedef struct {
 	pthread_t thread;
+#if defined(AS_USE_LIBUV)
+	uv_loop_t* uv_loop;
+#elif defined(AS_USE_LIBEVENT)
+	struct event_base* event_loop;
+#else
 	struct ev_loop* ev_loop;
+#endif
 	as_event_loop* as_loop;
 } loop;
 
@@ -166,6 +181,9 @@ main(int argc, char* argv[])
 	
 	if (share_loop) {
 		// Join on external event loop thread.
+#if defined(AS_USE_LIBEVENT)
+		event_base_loopbreak(external_loop.event_loop);
+#endif
 		join_event_loops(&external_loop, 1);
 	}
 	as_event_destroy_loops();
@@ -224,10 +242,53 @@ loop_thread(void* udata)
 {
 	// Create external loop.
 	loop* loop = udata;
- 	loop->ev_loop = ev_loop_new(EVFLAG_AUTO);
 
- 	// Share event loop with C client.
- 	// This must be done in event loop thread.
+#if defined(AS_USE_LIBUV)
+
+	loop->uv_loop = malloc(sizeof(uv_loop_t));
+	uv_loop_init(loop->uv_loop);
+
+	// Share event loop with C client.
+	// This must be done in event loop thread.
+	loop->as_loop = as_event_set_external_loop(loop->uv_loop);
+
+	// Notify parent thread that external loop has been initialized.
+	as_monitor_notify(&share_loops_monitor);
+
+	uv_run(loop->uv_loop, UV_RUN_DEFAULT);
+	uv_loop_close(loop->uv_loop);
+	free(loop->uv_loop);
+
+#elif defined(AS_USE_LIBEVENT)
+
+	loop->event_loop = event_base_new();
+
+	// Add a virtual event to prevent event_base_dispatch() from returning prematurely.
+#if LIBEVENT_VERSION_NUMBER < 0x02010000
+	event_base_add_virtual(loop->event_loop);
+#endif
+
+	// Share event loop with C client.
+	// This must be done in event loop thread.
+	loop->as_loop = as_event_set_external_loop(loop->event_loop);
+
+	// Notify parent thread that external loop has been initialized.
+	as_monitor_notify(&share_loops_monitor);
+
+#if LIBEVENT_VERSION_NUMBER < 0x02010000
+	event_base_dispatch(loop->event_loop);
+#else
+	event_base_loop(loop->event_loop, EVLOOP_NO_EXIT_ON_EMPTY);
+#endif
+
+	event_base_free(loop->event_loop);
+
+#else
+
+	loop->ev_loop = ev_loop_new(EVFLAG_AUTO);
+
+	// Share event loop with C client.
+	// This must be done in event loop thread.
 	loop->as_loop = as_event_set_external_loop(loop->ev_loop);
 
 	// Notify parent thread that external loop has been initialized.
@@ -235,6 +296,8 @@ loop_thread(void* udata)
 
 	ev_loop(loop->ev_loop, 0);
 	ev_loop_destroy(loop->ev_loop);
+
+#endif
 	return NULL;
 }
 

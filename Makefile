@@ -10,7 +10,7 @@ CFLAGS = -std=gnu99 -g -Wall -fPIC -O3
 CFLAGS += -fno-common -fno-strict-aliasing
 CFLAGS += -march=nocona -DMARCH_$(ARCH)
 CFLAGS += -D_FILE_OFFSET_BITS=64 -D_REENTRANT -D_GNU_SOURCE
-CFLAGS += -DAS_USE_LIBEV -I/usr/local/include
+CFLAGS += -I/usr/local/include
 
 ifeq ($(OS),Darwin)
   CFLAGS += -D_DARWIN_UNLIMITED_SELECT
@@ -18,7 +18,20 @@ else
   CFLAGS += -rdynamic
 endif
 
-LDFLAGS = -L/usr/local/lib -laerospike -lev -lssl -lcrypto -lpthread -lm -lz
+LDFLAGS = -L/usr/local/lib -laerospike
+
+ifeq ($(EVENT_LIB),libuv)
+  CFLAGS += -DAS_USE_LIBUV
+  LDFLAGS += -luv
+else ifeq ($(EVENT_LIB),libevent)
+  CFLAGS += -DAS_USE_LIBEVENT
+  LDFLAGS += -levent_core -levent_pthreads
+else
+  CFLAGS += -DAS_USE_LIBEV
+  LDFLAGS += -lev
+endif
+
+LDFLAGS += -lssl -lcrypto -lpthread -lm -lz
 
 ifneq ($(OS),Darwin)
   LDFLAGS += -lrt -ldl
