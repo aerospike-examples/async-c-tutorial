@@ -50,7 +50,7 @@ OBJECTS = async_tutorial.o
 all: build
 
 .PHONY: build
-build: target/async_tutorial
+build: target/async_tutorial target/single_thread_libevent
 
 .PHONY: clean
 clean:
