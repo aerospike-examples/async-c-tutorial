@@ -46,6 +46,7 @@ static void write_listener(as_error* err, void* udata, as_event_loop* event_loop
 static void batch_read(as_event_loop* event_loop, uint32_t max_records);
 static void batch_listener(as_error* err, as_batch_read_records* records, void* udata, as_event_loop* event_loop);
 static void close_aerospike();
+static void close_walk(uv_handle_t* handle, void* arg);
 
 /******************************************************************************
  *	Functions
@@ -121,9 +122,37 @@ main(int argc, char* argv[])
 	write_records_async(&counter);
 	
 	uv_run(shared_loop.uv_loop, UV_RUN_DEFAULT);
+	uv_walk(shared_loop.uv_loop, close_walk, NULL);
+	uv_run(shared_loop.uv_loop, UV_RUN_DEFAULT);
+
 	uv_loop_close(shared_loop.uv_loop);
 	free(shared_loop.uv_loop);
 	as_event_destroy_loops();
+}
+
+static void
+connection_closed(uv_handle_t* socket)
+{
+	// socket->data has as_event_command ptr but that may have already been freed,
+	// so free as_event_connection ptr by socket which is first field in as_event_connection.
+	cf_free(socket);
+}
+
+static void
+close_walk(uv_handle_t* handle, void* arg)
+{
+	if (! uv_is_closing(handle)) {
+		// as_log_debug("Close handle %p %d", handle, handle->type);
+		if (handle->type == UV_TCP) {
+			// Give callback for known connection handles.
+			uv_close(handle, connection_closed);
+		}
+		else {
+			// Received unexpected handle.
+			// Close handle, but do not provide callback that might free unallocated data.
+			uv_close(handle, NULL);
+		}
+	}
 }
 
 static void
