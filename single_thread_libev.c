@@ -4,7 +4,6 @@
 #include <aerospike/as_event.h>
 #include <aerospike/as_monitor.h>
 #include <unistd.h>
-#include <event.h>
 
 /******************************************************************************
  *	Types
@@ -13,7 +12,7 @@
 // External loop definition
 typedef struct {
 	pthread_t thread;
-	struct event_base* event_loop;
+	struct ev_loop* ev_loop;
 	as_event_loop* as_loop;
 } loop;
 
@@ -82,8 +81,6 @@ main(int argc, char* argv[])
 	printf("Host=%s:%d\n", g_host, g_port);
 	printf("Namespace=%s\n", g_namespace);
 	printf("Set=%s\n", g_set);
-	
-	as_event_set_single_thread(true);
 
 	// Tell C client the maximum number of event loops that will be shared.
 	if (! as_event_set_external_loop_capacity(1)) {
@@ -91,8 +88,8 @@ main(int argc, char* argv[])
 		return -1;
 	}
 
-	shared_loop.event_loop = event_base_new();
-	shared_loop.as_loop = as_event_set_external_loop(shared_loop.event_loop);
+	shared_loop.ev_loop = ev_loop_new(EVFLAG_AUTO);
+	shared_loop.as_loop = as_event_set_external_loop(shared_loop.ev_loop);
 
 	as_config cfg;
 	as_config_init(&cfg);
@@ -122,8 +119,8 @@ main(int argc, char* argv[])
 	};
 	write_records_async(&counter);
 	
-	event_base_dispatch(shared_loop.event_loop);
-	event_base_free(shared_loop.event_loop);
+	ev_loop(shared_loop.ev_loop, 0);
+	ev_loop_destroy(shared_loop.ev_loop);
 	as_event_destroy_loops();
 }
 

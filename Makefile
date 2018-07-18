@@ -23,12 +23,15 @@ LDFLAGS = -L/usr/local/lib -laerospike
 ifeq ($(EVENT_LIB),libuv)
   CFLAGS += -DAS_USE_LIBUV
   LDFLAGS += -luv
+  TARGETS = target/single_thread_libuv
 else ifeq ($(EVENT_LIB),libevent)
   CFLAGS += -DAS_USE_LIBEVENT
   LDFLAGS += -levent_core -levent_pthreads
+  TARGETS = target/single_thread_libevent
 else
   CFLAGS += -DAS_USE_LIBEV
   LDFLAGS += -lev
+  TARGETS = target/single_thread_libev
 endif
 
 LDFLAGS += -lssl -lcrypto -lpthread -lm -lz
@@ -50,7 +53,7 @@ OBJECTS = async_tutorial.o
 all: build
 
 .PHONY: build
-build: target/async_tutorial target/single_thread_libevent
+build: target/async_tutorial $(TARGETS)
 
 .PHONY: clean
 clean:
@@ -64,3 +67,4 @@ target/%.o: %.c | target
 
 target/async_tutorial: $(addprefix target/,$(OBJECTS)) | target
 	cc -o $@ $^ $(LDFLAGS)
+
