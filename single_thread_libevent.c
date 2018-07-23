@@ -83,6 +83,7 @@ main(int argc, char* argv[])
 	printf("Namespace=%s\n", g_namespace);
 	printf("Set=%s\n", g_set);
 	
+	// Tell client to not call evthread_use_pthreads().
 	as_event_set_single_thread(true);
 
 	// Tell C client the maximum number of event loops that will be shared.
@@ -97,8 +98,9 @@ main(int argc, char* argv[])
 	as_config cfg;
 	as_config_init(&cfg);
 	as_config_add_host(&cfg, g_host, g_port);
-	cfg.async_max_conns_per_node = 200;
-	cfg.thread_pool_size = 0;  // disable sync thread pools.
+	cfg.async_max_conns_per_node = 100; // Limit number of connections to each node.
+	cfg.thread_pool_size = 0;  // Disable sync command thread pool.
+	cfg.tend_thread_cpu = 0;  // Assign tend thread to cpu core 0.
 	aerospike_init(&as, &cfg);
 	
 	// Connect to cluster.

@@ -96,8 +96,8 @@ main(int argc, char* argv[])
 	as_config cfg;
 	as_config_init(&cfg);
 	as_config_add_host(&cfg, g_host, g_port);
-	cfg.async_max_conns_per_node = 200;
-	cfg.thread_pool_size = 0;  // disable sync thread pools.
+	cfg.async_max_conns_per_node = 100; // Limit number of connections to each node.
+	cfg.thread_pool_size = 0;  // Disable sync command thread pool.
 	aerospike_init(&as, &cfg);
 	
 	// Connect to cluster.
