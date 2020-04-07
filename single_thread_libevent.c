@@ -46,7 +46,7 @@ static bool write_record(as_event_loop* event_loop, counter* counter);
 static void write_listener(as_error* err, void* udata, as_event_loop* event_loop);
 static void batch_read(as_event_loop* event_loop, uint32_t max_records);
 static void batch_listener(as_error* err, as_batch_read_records* records, void* udata, as_event_loop* event_loop);
-static void close_aerospike();
+static void close_aerospike(as_event_loop* event_loop);
 
 /******************************************************************************
  *	Functions
@@ -111,6 +111,8 @@ main(int argc, char* argv[])
 		as_event_close_loops();
 		return -1;
 	}
+
+	as_event_loop_register_aerospike(shared_loop.as_loop, &as);
 	
 	// Demonstrate async non-pipelined writes.
 	// Async queue size (100) is less because there is one socket per concurrent command.
@@ -178,7 +180,7 @@ write_listener(as_error* err, void* udata, as_event_loop* event_loop)
 	
 	if (err) {
 		printf("aerospike_key_put_async() returned %d - %s\n", err->code, err->message);
-		close_aerospike();
+		close_aerospike(event_loop);
 		return;
 	}
 
@@ -229,7 +231,7 @@ batch_listener(as_error* err, as_batch_read_records* records, void* udata, as_ev
 	if (err) {
 		printf("aerospike_batch_read_async() returned %d - %s\n", err->code, err->message);
 		as_batch_read_destroy(records);
-		close_aerospike();
+		close_aerospike(event_loop);
 		return;
 	}
 
@@ -255,13 +257,22 @@ batch_listener(as_error* err, as_batch_read_records* records, void* udata, as_ev
 
 	printf("Found %u/%u records\n", n_found, list->size);
 	as_batch_read_destroy(records);
-	close_aerospike();
+	close_aerospike(event_loop);
 }
 
-static void close_aerospike()
+static void
+destroy_aerospike(void* udata)
 {
+	as_event_loop* event_loop = udata;
+
 	as_error err;
 	aerospike_close(&as, &err);
 	aerospike_destroy(&as);
-	as_event_close_loops();
+	as_event_close_loop(event_loop);
+}
+
+static void
+close_aerospike(as_event_loop* event_loop)
+{
+	as_event_loop_close_aerospike(event_loop, &as, destroy_aerospike, event_loop);
 }
