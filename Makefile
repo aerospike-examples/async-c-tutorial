@@ -8,17 +8,60 @@ PLATFORM = $(OS)-$(ARCH)
 
 CFLAGS = -std=gnu99 -g -Wall -fPIC -O3
 CFLAGS += -fno-common -fno-strict-aliasing
-CFLAGS += -march=nocona -DMARCH_$(ARCH)
 CFLAGS += -D_FILE_OFFSET_BITS=64 -D_REENTRANT -D_GNU_SOURCE
 CFLAGS += -I/usr/local/include
 
+LDFLAGS = /usr/local/lib/libaerospike.a 
+
 ifeq ($(OS),Darwin)
   CFLAGS += -D_DARWIN_UNLIMITED_SELECT
-else
-  CFLAGS += -rdynamic
-endif
+  ifneq ($(wildcard /opt/homebrew/include),)
+    # Mac new homebrew external include path
+    CFLAGS += -I/opt/homebrew/include
+  else ifneq ($(wildcard /usr/local/opt/libevent/include),)
+    # Mac old homebrew libevent include path
+    CFLAGS += -I/usr/local/opt/libevent/include
+  endif
 
-LDFLAGS = -L/usr/local/lib -laerospike
+  ifneq ($(wildcard /opt/homebrew/opt/openssl/include),)
+    # Mac new homebrew openssl include path
+    CFLAGS += -I/opt/homebrew/opt/openssl/include
+  else ifneq ($(wildcard /usr/local/opt/openssl/include),)
+    # Mac old homebrew openssl include path
+    CFLAGS += -I/usr/local/opt/openssl/include
+  else ifneq ($(wildcard /opt/local/include/openssl),)
+    # macports openssl include path
+    CFLAGS += -I/opt/local/include
+  endif
+
+  ifneq ($(wildcard /opt/homebrew/lib),)
+    # Mac new homebrew external lib path
+    LDFLAGS += -L/opt/homebrew/lib
+  else
+    # Mac old homebrew external lib path
+    LDFLAGS += -L/usr/local/lib
+
+    ifeq ($(EVENT_LIB),libevent)
+      LDFLAGS += -L/usr/local/opt/libevent/lib
+    endif
+  endif
+
+  ifneq ($(wildcard /opt/homebrew/opt/openssl/lib),)
+    # Mac new homebrew openssl lib path
+    LDFLAGS += -L/opt/homebrew/opt/openssl/lib
+  else
+    # Mac old homebrew openssl lib path
+    LDFLAGS += -L/usr/local/opt/openssl/lib
+  endif
+else ifeq ($(OS),FreeBSD)
+  CFLAGS += -finline-functions
+else
+  CFLAGS += -finline-functions -rdynamic
+
+  ifneq ($(wildcard /etc/alpine-release),)
+    CFLAGS += -DAS_ALPINE
+  endif
+endif
 
 ifeq ($(EVENT_LIB),libuv)
   CFLAGS += -DAS_USE_LIBUV
