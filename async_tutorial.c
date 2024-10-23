@@ -2,6 +2,7 @@
 #include <aerospike/aerospike_batch.h>
 #include <aerospike/aerospike_key.h>
 #include <aerospike/as_event.h>
+#include <aerospike/as_log.h>
 #include <aerospike/as_monitor.h>
 #include <unistd.h>
 
@@ -71,6 +72,17 @@ static void batch_listener(as_error* err, as_batch_read_records* records, void* 
  *	Functions
  *****************************************************************************/
 
+static bool
+log_callback(as_log_level level, const char * func, const char * file, uint32_t line, const char * fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	vprintf(fmt, ap);
+	printf("\n");
+	va_end(ap);
+	return true;
+}
+
 int
 main(int argc, char* argv[])
 {
@@ -112,6 +124,9 @@ main(int argc, char* argv[])
 	printf("ShareLoop=%s\n", share_loop ? "true" : "false");
 	printf("Pipeline=%s\n", pipeline ? "true" : "false");
 	
+	as_log_set_level(AS_LOG_LEVEL_INFO);
+	as_log_set_callback(log_callback);
+
 	if (share_loop) {
 		// Demonstrate how to share an existing event loop.
 		if (! share_event_loops(&external_loop, 1)) {
